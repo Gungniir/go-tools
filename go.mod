@@ -1,4 +1,4 @@
-module github.com/gungniir/go-tools/collgen
+module github.com/gungniir/go-tools
 
 go 1.25.0
 
