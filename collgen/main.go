@@ -337,7 +337,7 @@ func genOne(f *File, typeName string, vars []foundVar) {
 	// формируем уникальные идентификаторы: _<TypeName>_<VarName>_Name
 	f.Const().DefsFunc(func(g *Group) {
 		for _, v := range vars {
-			g.Id(fmt.Sprintf("_%s_%s_Name", typeName, v.Name)).Op("=").Lit(v.LitName)
+			g.Id(fmt.Sprintf("_collgen_%s_%s_Name", typeName, v.Name)).Op("=").Lit(v.LitName)
 		}
 	})
 
@@ -506,7 +506,7 @@ func genOne(f *File, typeName string, vars []foundVar) {
 			for i := 0; i < count; i++ {
 				w := bits[i].word
 				bb := bits[i].bit
-				constName := fmt.Sprintf("_%s_%s_Name", typeName, vars[i].Name)
+				constName := fmt.Sprintf("_collgen_%s_%s_Name", typeName, vars[i].Name)
 				b.If(
 					Parens(
 						Id("c").Dot(fmt.Sprintf("mask%d", w)).Op("&").Parens(Lit(1).Op("<<").Lit(bb)),
@@ -531,7 +531,7 @@ func genOne(f *File, typeName string, vars []foundVar) {
 			For(List(Id("_"), Id("tok")).Op(":=").Range().Qual("strings", "Fields").Call(Id("s"))).Block(
 				Switch(Id("tok")).BlockFunc(func(sb *Group) {
 					for i, v := range vars {
-						constName := fmt.Sprintf("_%s_%s_Name", typeName, v.Name)
+						constName := fmt.Sprintf("_collgen_%s_%s_Name", typeName, v.Name)
 						sb.Case(Id(constName)).Block(
 							// установим соответствующий бит (через Add, чтобы логика была единообразной)
 							Id("c").Op("=").Id("c").Dot("Add").Call(Id(v.Name)),

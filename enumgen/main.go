@@ -318,7 +318,7 @@ func hasSpaceRune(s string) bool {
 }
 
 func getConstName(typeName string, vName string) string {
-	return fmt.Sprintf("_%s_%s_Name", typeName, vName)
+	return fmt.Sprintf("_enumgen_%s_%s_Name", typeName, vName)
 }
 
 func genOne(f *File, typeName string, vars []foundVar) {
