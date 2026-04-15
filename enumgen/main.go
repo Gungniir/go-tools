@@ -18,9 +18,10 @@ import (
 )
 
 type foundVar struct {
-	Name    string // идентификатор переменной: TagDynamicClient
-	Order   int
-	LitName string // значение поля name: "dynamic_client"
+	Name      string // идентификатор переменной: TagDynamicClient
+	Order     int
+	LitName   string // значение поля name: "dynamic_client"
+	IsDefault bool   // переменная с пустым именем (дефолтное значение enum)
 }
 
 func main() {
@@ -38,8 +39,9 @@ func main() {
 	// Подготовим структуры для AST
 	fset := token.NewFileSet()
 
-	typeVars := map[string][]foundVar{} // typeName -> vars
-	targetTypes := map[string]bool{}    // интересующие типы (по маркеру или -type)
+	typeVars := map[string][]foundVar{}   // typeName -> vars
+	targetTypes := map[string]bool{}      // интересующие типы (по маркеру или -type)
+	typeDefaultVar := map[string]string{} // typeName -> varName пользовательского дефолтного значения
 	pkgName := ""
 	order := 0
 
@@ -102,18 +104,38 @@ func main() {
 					if typeName == "" || !targetTypes[typeName] {
 						continue
 					}
-					litName, okName := extractNameFromCompositeLit(cl)
-					if !okName || litName == "" {
-						log.Fatalf("variable %s: cannot extract Tag.name string literal", name.Name)
+
+					isDefault := false
+					var litName string
+					if len(cl.Elts) == 0 {
+						isDefault = true
+					} else {
+						var okName bool
+						litName, okName = extractNameFromCompositeLit(cl)
+						if !okName {
+							log.Fatalf("variable %s: cannot extract %s.name string literal", name.Name, typeName)
+						}
+						if litName == "" {
+							isDefault = true
+						}
 					}
-					if hasSpaceRune(litName) {
-						log.Fatalf("variable %s: name %q contains whitespace", name.Name, litName)
+
+					if isDefault {
+						if _, exists := typeDefaultVar[typeName]; exists {
+							log.Fatalf("type %s has multiple default (empty) vars", typeName)
+						}
+						typeDefaultVar[typeName] = name.Name
+					} else {
+						if hasSpaceRune(litName) {
+							log.Fatalf("variable %s: name %q contains whitespace", name.Name, litName)
+						}
 					}
 
 					typeVars[typeName] = append(typeVars[typeName], foundVar{
-						Name:    name.Name,
-						Order:   order,
-						LitName: litName,
+						Name:      name.Name,
+						Order:     order,
+						LitName:   litName,
+						IsDefault: isDefault,
 					})
 					order++
 				}
@@ -204,18 +226,38 @@ func main() {
 						if typeName == "" || !targetTypes[typeName] {
 							continue
 						}
-						litName, okName := extractNameFromCompositeLit(cl)
-						if !okName || litName == "" {
-							log.Fatalf("variable %s: cannot extract Tag.name string literal", name.Name)
+
+						isDefault := false
+						var litName string
+						if len(cl.Elts) == 0 {
+							isDefault = true
+						} else {
+							var okName bool
+							litName, okName = extractNameFromCompositeLit(cl)
+							if !okName {
+								log.Fatalf("variable %s: cannot extract %s.name string literal", name.Name, typeName)
+							}
+							if litName == "" {
+								isDefault = true
+							}
 						}
-						if hasSpaceRune(litName) {
-							log.Fatalf("variable %s: name %q contains whitespace", name.Name, litName)
+
+						if isDefault {
+							if _, exists := typeDefaultVar[typeName]; exists {
+								log.Fatalf("type %s has multiple default (empty) vars", typeName)
+							}
+							typeDefaultVar[typeName] = name.Name
+						} else {
+							if hasSpaceRune(litName) {
+								log.Fatalf("variable %s: name %q contains whitespace", name.Name, litName)
+							}
 						}
 
 						typeVars[typeName] = append(typeVars[typeName], foundVar{
-							Name:    name.Name,
-							Order:   order,
-							LitName: litName,
+							Name:      name.Name,
+							Order:     order,
+							LitName:   litName,
+							IsDefault: isDefault,
 						})
 						order++
 					}
@@ -321,19 +363,45 @@ func getConstName(typeName string, vName string) string {
 	return fmt.Sprintf("_enumgen_%s_%s_Name", typeName, vName)
 }
 
+func getEmptyVarName() string {
+	return "Unknown"
+}
+
 func genOne(f *File, typeName string, vars []foundVar) {
-	// формируем уникальные идентификаторы: _<TypeName>_<VarName>_Name
-	f.Const().DefsFunc(func(g *Group) {
-		for _, v := range vars {
-			g.Id(getConstName(typeName, v.Name)).Op("=").Lit(v.LitName)
+	// Разделяем обычные переменные и дефолтную (с пустым именем)
+	var regularVars []foundVar
+	var defaultVar *foundVar
+	for i, v := range vars {
+		if v.IsDefault {
+			defaultVar = &vars[i]
+		} else {
+			regularVars = append(regularVars, v)
 		}
-	})
+	}
+
+	// Определяем имя дефолтной переменной; если пользователь не объявил — генерируем
+	defaultVarName := ""
+	if defaultVar != nil {
+		defaultVarName = defaultVar.Name
+	} else {
+		defaultVarName = getEmptyVarName()
+		f.Var().Id(defaultVarName).Op("=").Id(typeName).Values()
+	}
+
+	// формируем уникальные идентификаторы: _<TypeName>_<VarName>_Name
+	if len(regularVars) > 0 {
+		f.Const().DefsFunc(func(g *Group) {
+			for _, v := range regularVars {
+				g.Id(getConstName(typeName, v.Name)).Op("=").Lit(v.LitName)
+			}
+		})
+	}
 
 	// --- String() string
 	f.Func().Params(Id("c").Id(typeName)).Id("String").Params().String().
 		BlockFunc(func(b *Group) {
 			b.Switch(Id("c")).BlockFunc(func(s *Group) {
-				for _, v := range vars {
+				for _, v := range regularVars {
 					s.Case(Id(v.Name)).Block(
 						Return(Id(getConstName(typeName, v.Name))),
 					)
@@ -349,11 +417,14 @@ func genOne(f *File, typeName string, vars []foundVar) {
 		Block(
 			Id("c").Op(":=").Id(typeName).Values(),
 			Switch(Id("s")).BlockFunc(func(s *Group) {
-				for _, v := range vars {
+				for _, v := range regularVars {
 					s.Case(Id(getConstName(typeName, v.Name))).Block(
 						Return(Id(v.Name), Nil()),
 					)
 				}
+				s.Case(Lit("")).Block(
+					Return(Id(defaultVarName), Nil()),
+				)
 				s.Default().Block(
 					Return(Id("c"), Qual("fmt", "Errorf").Call(Lit("unknown %s: %q"), Lit(typeName), Id("s"))),
 				)
